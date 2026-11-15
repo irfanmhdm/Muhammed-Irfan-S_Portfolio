@@ -2683,6 +2683,43 @@
     }
   </style>
 
+  <style id="orbit-coverflow-final">
+    #projects .project-card,
+    #projects .project-card:hover,
+    #projects .project-card.is-active {
+      transform: translate(-50%, -50%) translate3d(var(--deck-x, 0px), var(--deck-y, 0px), var(--deck-z, 0px)) rotateY(var(--deck-ry, 0deg)) scale(var(--deck-scale, 1)) !important;
+      transition: none !important;
+      opacity: var(--deck-opacity, 1) !important;
+      filter: brightness(var(--deck-bright, 1)) !important;
+      z-index: var(--deck-order, 1) !important;
+      backface-visibility: visible !important
+    }
+    #projects .rail { transform-style: preserve-3d !important }
+  </style>
+  <style id="orbit-wide-and-buttons">
+    @media(min-width:901px) {
+      #projects .project-card { width: min(27vw, 520px) !important; min-width: 300px !important }
+      #projects .stk { height: clamp(430px, 38vw, 600px) !important }
+    }
+    /* About portrait */
+    .mono-m { clip-path: none !important; border-radius: 24px !important; overflow: hidden; -webkit-text-stroke: 0 !important;
+      background: radial-gradient(ellipse at 50% 75%, rgba(128,15,47,.55), rgba(26,5,11,.9) 70%) !important; border: 1px solid rgba(128,15,47,.45) !important }
+    .mono-m img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block }
+    /* Send message + Download resume: dark cherry, never white */
+    #dl.btn, #cf button[type="submit"].btn {
+      background: #3a0c1a !important; color: #fff !important; border: 1px solid rgba(128,15,47,.75) !important;
+      box-shadow: none !important; transition: background .25s, border-color .25s, box-shadow .25s, transform .25s !important }
+    #dl.btn:before, #cf button[type="submit"].btn:before { display: none !important }
+    #dl.btn:hover, #cf button[type="submit"].btn:hover {
+      background: #4d1022 !important; color: #fff !important; border-color: rgba(227,66,52,.5) !important;
+      box-shadow: 0 0 14px rgba(128,15,47,.35) !important; transform: translateY(-1px) }
+    #dl.btn:active, #cf button[type="submit"].btn:active { background: #4d1022 !important; color: #fff !important; transform: none }
+    #dl.btn:focus-visible, #cf button[type="submit"].btn:focus-visible { outline: 2px solid rgba(227,66,52,.7); outline-offset: 3px; background: #4d1022 !important; color: #fff !important }
+  </style>
+  <style id="send-button-centering">
+    #dl.btn { display: inline-flex !important; align-items: center; justify-content: center; text-align: center }
+    #cf button[type="submit"].btn { display: flex !important; align-items: center; justify-content: center; text-align: center; width: 100% }
+  </style>
 </head>
 
 <body>
@@ -2808,7 +2845,7 @@
     </section>
     <section data-l=".8" id="about">
       <div class="ab rv">
-        <div class="mono-m">MI</div>
+        <div class="mono-m"><img id="ab-img" alt="Muhammed Irfan S" decoding="async"></div>
         <div><span class="mono">ABOUT</span>
           <h2 class="s">Reliable code, clear thinking.</h2>
           <p>I’m an MCA student at FISAT with a foundation in programming, full-stack development and database
@@ -2943,6 +2980,7 @@
     $('#arsenal-grid').querySelectorAll('img').forEach(img => img.addEventListener('error', () => { img.closest('.arsenal-mark').innerHTML = '<svg viewBox="0 0 48 48" width="46" height="46" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M24 4l4.5 14.5L43 24l-14.5 5.5L24 44l-5.5-14.5L4 24l14.5-5.5L24 4z"/><circle cx="24" cy="24" r="5"/></svg>' }, { once: true }));
 
     /* Keep the uploaded portrait as one intact, static image */
+    const abi = document.getElementById('ab-img'); if (abi) { abi.src = IMG; }
     const pm = $('#pm'); pm.src = IMG; pm.loading = 'eager'; pm.decoding = 'sync'; pm.style.opacity = '1'; pm.style.animation = 'none';
 
     /* role typing */
@@ -3000,39 +3038,71 @@
       });
       card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openProject(projectIndex); } });
     });
-    function renderProjectDeck() {
+    /* Continuous cylindrical orbit: the four cards sit on one invisible ring and revolve around the
+       central Y-axis at constant angular speed (no stepping). Front = large/bright, sides = angled,
+       rear = small/dark/far. Cards bob gently so the whole set feels like it is floating. */
+    const REV_SECONDS = 26;               // one full revolution
+    let pos = 0, vel = 1, seek = null, rafId = 0, lastT = 0;
+    function layoutDeck(p, tm) {
       const narrow = window.matchMedia('(max-width:600px)').matches;
       const medium = window.matchMedia('(max-width:900px)').matches;
-      const spread = narrow ? Math.min(innerWidth * .37, 145) : (medium ? 220 : Math.min(innerWidth * .235, 350));
-      const far = narrow ? Math.min(innerWidth * .62, 225) : (medium ? 390 : Math.min(innerWidth * .42, 620));
-      // Four distinct positions: centre, right, rear, left. No cloned or repeated screenshots.
-      const slots = [
-        { name: 'centre', x: 0, y: 0, z: 110, scale: 1, ry: 0, opacity: 1, bright: 1, order: 10 },
-        { name: 'right', x: spread, y: 0, z: -75, scale: .80, ry: -27, opacity: .88, bright: .88, order: 7 },
-        { name: 'rear', x: 0, y: -28, z: -260, scale: .58, ry: 0, opacity: .43, bright: .62, order: 2 },
-        { name: 'left', x: -spread, y: 0, z: -75, scale: .80, ry: 27, opacity: .88, bright: .88, order: 7 }
-      ];
+      const Rx = narrow ? Math.min(innerWidth * .34, 130) : (medium ? Math.min(innerWidth * .3, 260) : Math.min(innerWidth * .32, 640));
+      const depth = narrow ? 170 : 340;
       projectCards.forEach((card, i) => {
-        const rel = (i - activeProject + projectCount) % projectCount;
-        const pos = slots[rel];
-        const mobileScale = narrow ? (pos.name === 'centre' ? 1 : pos.name === 'rear' ? .48 : .68) : pos.scale;
-        card.dataset.position = pos.name;
-        card.style.setProperty('--deck-x', pos.x + 'px');
-        card.style.setProperty('--deck-y', (narrow ? pos.y * .65 : pos.y) + 'px');
-        card.style.setProperty('--deck-z', pos.z + 'px');
-        card.style.setProperty('--deck-scale', mobileScale);
-        card.style.setProperty('--deck-ry', (narrow ? pos.ry * .72 : pos.ry) + 'deg');
-        card.style.setProperty('--deck-opacity', narrow && pos.name === 'rear' ? .28 : pos.opacity);
-        card.style.setProperty('--deck-bright', pos.bright);
-        card.style.setProperty('--deck-order', pos.order);
-        card.classList.toggle('is-active', rel === 0);
-        card.setAttribute('aria-current', rel === 0 ? 'true' : 'false');
-        card.setAttribute('tabindex', rel === 0 ? '0' : '-1');
+        const th = (i - p) * Math.PI * 2 / projectCount;       // 0 = front, +90deg = right, 180deg = rear
+        const c = Math.cos(th), sn = Math.sin(th);
+        const f = (1 + c) / 2;                                  // 1 front ... 0 rear
+        const bob = Math.sin(tm * .0014 + i * 1.9) * (narrow ? 4 : 9);
+        const x = sn * Rx;
+        const z = 110 - (1 - f) * depth;
+        const y = (1 - f) * (narrow ? -16 : -36) + f * (narrow ? 6 : 16) + bob;
+        const sc = (narrow ? .5 : .6) + (narrow ? .5 : .4) * f;
+        const ry = -sn * (narrow ? 20 : 26);
+        const op = .38 + .62 * Math.pow(f, .75);
+        const br = .5 + .54 * f;                                // rear = darker
+        card.style.setProperty('--deck-x', x.toFixed(2) + 'px');
+        card.style.setProperty('--deck-y', y.toFixed(2) + 'px');
+        card.style.setProperty('--deck-z', z.toFixed(2) + 'px');
+        card.style.setProperty('--deck-scale', sc.toFixed(4));
+        card.style.setProperty('--deck-ry', ry.toFixed(2) + 'deg');
+        card.style.setProperty('--deck-opacity', op.toFixed(3));
+        card.style.setProperty('--deck-bright', br.toFixed(3));
+        card.style.setProperty('--deck-order', String(Math.round(f * 20) + 1));
       });
+      const act = ((Math.round(p) % projectCount) + projectCount) % projectCount;
+      if (act !== activeProject || !projectCards[act].classList.contains('is-active')) {
+        activeProject = act;
+        projectCards.forEach((card, i) => {
+          const on = i === act;
+          card.classList.toggle('is-active', on);
+          card.dataset.position = on ? 'centre' : 'side';
+          card.setAttribute('aria-current', on ? 'true' : 'false');
+          card.setAttribute('tabindex', on ? '0' : '-1');
+        });
+      }
     }
-    function goProject(step = 1) { activeProject = (activeProject + step + projectCount) % projectCount; renderProjectDeck(); }
-    function startDeck() { if (reduceMotion || deckTimer || projectCount < 2) return; deckTimer = setInterval(() => { if (!deckPaused && !document.hidden) goProject(1) }, 2800); }
-    function stopDeck() { if (deckTimer) { clearInterval(deckTimer); deckTimer = null; } }
+    function frame(now) {
+      const dt = Math.min(.05, (now - (lastT || now)) / 1000); lastT = now;
+      if (seek !== null) {                                       // Prev / Next / click: glide to the target, then keep orbiting
+        pos += (seek - pos) * (1 - Math.exp(-dt * 4.5));
+        if (Math.abs(seek - pos) < .002) { pos = seek; seek = null; }
+      } else {
+        const target = (deckPaused || reduceMotion) ? 0 : 1;     // hover pause eases to a stop, then eases back up
+        vel += (target - vel) * (1 - Math.exp(-dt * 4));
+        pos += vel * dt * projectCount / REV_SECONDS;
+      }
+      layoutDeck(pos, now);
+      rafId = requestAnimationFrame(frame);
+    }
+    function renderProjectDeck() {                               // used by click-to-focus and resize
+      let d = (((activeProject - pos) % projectCount) + projectCount) % projectCount;
+      if (d > projectCount / 2) d -= projectCount;
+      if (Math.abs(d) > .001 && seek === null) seek = pos + d;
+      else if (!rafId) layoutDeck(pos, performance.now());
+    }
+    function goProject(step = 1) { seek = (seek !== null ? seek : Math.round(pos)) + step; }
+    function startDeck() { if (!rafId) { lastT = 0; rafId = requestAnimationFrame(frame); } }
+    function stopDeck() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
     projectCards.forEach(card => {
       card.addEventListener('mouseenter', () => deckPaused = true);
       card.addEventListener('mouseleave', () => deckPaused = false);
